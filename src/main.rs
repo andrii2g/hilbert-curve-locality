@@ -1,8 +1,9 @@
 mod metrics;
+mod svg;
 
 use hilbert_curve_locality::{Grid, Order};
 use metrics::{intervals, locality, mapping_times, queries};
-use std::{env, process::ExitCode};
+use std::{env, path::Path, process::ExitCode};
 
 fn main() -> ExitCode {
     match run() {
@@ -17,12 +18,13 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let args: Vec<_> = env::args().skip(1).collect();
     if args == ["--help"] || args == ["-h"] {
-        println!("Usage: hilbert-curve-locality [SIDE]");
+        println!("Usage: hilbert-curve-locality [SIDE] [OUTPUT_DIR]");
         println!("SIDE: 8, 16, 32 (default), 64, or 128");
+        println!("OUTPUT_DIR: reports (default)");
         return Ok(());
     }
-    if args.len() > 1 {
-        return Err("Expected at most one grid size. See --help.".into());
+    if args.len() > 2 {
+        return Err("Expected a grid size and optional output directory. See --help.".into());
     }
     let grid = args
         .first()
@@ -45,8 +47,8 @@ fn run() -> Result<(), String> {
         "Enc ns/op",
         "Dec ns/op"
     );
-    for order in Order::ALL {
-        let stats = locality(grid, order);
+    let stats = Order::ALL.map(|order| locality(grid, order));
+    for (order, stats) in Order::ALL.into_iter().zip(&stats) {
         let (encode, decode) = mapping_times(grid, order);
         println!(
             "{:<10} {:>9.3} {:>8} {:>10.1} {:>7} {:>7} {:>7} {:>10.2} {:>10.2}",
@@ -55,14 +57,10 @@ fn run() -> Result<(), String> {
             stats.max_jump,
             stats.median_gap,
             stats.p95_gap,
-            stats.cell_gaps.iter().copied().max().unwrap(),
+            stats.max_gap,
             grid.scale_steps(order),
             encode,
             decode
-        );
-        debug_assert_eq!(
-            stats.max_gap,
-            stats.cell_gaps.iter().copied().max().unwrap()
         );
     }
 
@@ -89,6 +87,20 @@ fn run() -> Result<(), String> {
     println!(
         "{:<16} {row:>12.2} {morton:>8.2} {hilbert:>8.2}",
         "Seeded mean"
+    );
+    let output = args
+        .get(1)
+        .map_or(Path::new("reports"), |path| Path::new(path));
+    let query = queries
+        .iter()
+        .find(|(name, _)| *name == "Shifted square")
+        .unwrap()
+        .1;
+    svg::write_reports(output, grid, query, &stats)
+        .map_err(|error| format!("Could not write reports to {}: {error}", output.display()))?;
+    println!(
+        "\nWrote traversals.svg and heatmaps.svg to {}",
+        output.display()
     );
     Ok(())
 }
